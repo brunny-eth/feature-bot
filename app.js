@@ -77,9 +77,9 @@ async function findFeatureInNotion(searchText) {
 }
 
 // Parse a message for update command pattern
-// Format: @featurebot update "feature title or keywords" to "new status"
+// Format: @featurebot update feature title to new status
 function parseUpdateCommand(text) {
-  const updateRegex = /update\s+"?([^"]+)"?\s+to\s+"?([^"]+)"?/i;
+  const updateRegex = /update\s+(.*?)\s+to\s+(.*?)(?:\s|$)/i;
   const match = text.match(updateRegex);
   
   if (match) {
@@ -100,20 +100,43 @@ function parseStatusCommand(text) {
 }
 
 // Format Notion pages for Slack display
-function formatFeaturesForSlack(pages) {
+async function formatFeaturesForSlack(pages, client) {
   if (pages.length === 0) {
     return "No features found.";
   }
 
   let response = "*Feature Requests Status:*\n\n";
   
-  pages.forEach(page => {
+  for (const page of pages) {
     const title = page.properties.Title.title[0]?.text.content || "Untitled";
     const status = page.properties.Status.select?.name || "Unknown";
-    const pageId = page.id.replace(/-/g, '');
     
-    response += `• *${title}* - ${status} (ID: ${pageId})\n`;
-  });
+    // Get creator information if available in the page content
+    let creator = "Unknown";
+    try {
+      const { results } = await notion.blocks.children.list({
+        block_id: page.id,
+      });
+      
+      // Look for the original request block which contains creator info
+      for (const block of results) {
+        if (block.type === 'paragraph') {
+          const text = block.paragraph.rich_text[0]?.text.content || "";
+          if (text.includes("Original request by")) {
+            const creatorMatch = text.match(/Original request by ([^:]+):/);
+            if (creatorMatch && creatorMatch[1]) {
+              creator = creatorMatch[1].trim();
+            }
+            break;
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error fetching creator info:", error);
+    }
+    
+    response += `• *${title}* - ${status} - ${creator}\n`;
+  }
   
   return response;
 }
@@ -196,6 +219,25 @@ app.event('app_mention', async ({ event, context, client, say }) => {
       return;
     }
     
+    // Check if it's a help command
+    if (isHelpCommand(messageText)) {
+      const helpText = `*FeatureBot Commands:*
+  
+• *Create a feature request:* Start a thread with the feature request as the thread title, then tag @featurebot in the thread to save as a feature request
+• *Update status:* @featurebot update [feature name] to [status]
+• *Check statuses:* @featurebot status or @featurebot list features
+• *Help:* @featurebot help
+
+*Valid statuses:* ${validStatuses.join(', ')}`;
+
+      await client.chat.postMessage({
+        channel: event.channel,
+        thread_ts: threadTs,
+        text: helpText
+      });
+      return;
+    }
+
     // Check if it's a status check command
     if (parseStatusCommand(messageText)) {
       // It's a status check command
@@ -211,11 +253,18 @@ app.event('app_mention', async ({ event, context, client, say }) => {
         page_size: 10
       });
       
-      const formattedResponse = formatFeaturesForSlack(response.results);
-      
-      await client.chat.postMessage({
+      // Send a "working on it" message
+      const loadingMsg = await client.chat.postMessage({
         channel: event.channel,
         thread_ts: threadTs,
+        text: "Fetching feature statuses..."
+      });
+      
+      const formattedResponse = await formatFeaturesForSlack(response.results, client);
+      
+      await client.chat.update({
+        channel: event.channel,
+        ts: loadingMsg.ts,
         text: formattedResponse
       });
       return;
@@ -325,24 +374,11 @@ app.event('app_mention', async ({ event, context, client, say }) => {
   }
 });
 
-// Add help command
-app.message(/help|commands/, async ({ message, say }) => {
-  if (!message.text.includes('@featurebot')) return;
-  
-  const helpText = `*FeatureBot Commands:*
-  
-• *Create a feature request:* Tag @featurebot in a thread to save the thread as a feature request
-• *Update status:* @featurebot update "feature name or ID" to "status"
-• *Check statuses:* @featurebot status or @featurebot list features
-• *Help:* @featurebot help
-
-*Valid statuses:* ${validStatuses.join(', ')}`;
-
-  await say({
-    text: helpText,
-    thread_ts: message.thread_ts || message.ts
-  });
-});
+// Handle help command in app_mention event
+function isHelpCommand(text) {
+  return text.toLowerCase().includes('help') || 
+         text.toLowerCase().includes('commands');
+}
 
 // Log all received events to help with debugging
 app.use((args) => {
