@@ -1,17 +1,24 @@
 {
   "name": "feature-bot",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "api/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node api/index.js",
+    "dev": "nodemon api/index.js"
+  },
+  "engines": {
+    "node": ">=14.0.0"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Slack bot for capturing feature requests to Notion",
   "dependencies": {
     "@notionhq/client": "^2.2.16",
     "@slack/bolt": "^4.2.1",
     "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
   }
 }

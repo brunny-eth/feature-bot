@@ -4,6 +4,9 @@
 # Node.js dependencies
 node_modules/
 
+# vercel
+.vercel 
+
 # Logs
 logs
 *.log

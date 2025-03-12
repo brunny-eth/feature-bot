@@ -1,3 +1,4 @@
+// Load environment variables
 require('dotenv').config();
 
 const { App, ExpressReceiver } = require('@slack/bolt');
@@ -23,9 +24,9 @@ receiver.router.post('/slack/events', (req, res, next) => {
 });
 
 receiver.router.get('/test', (req, res) => {
-    console.log('Test endpoint hit!');
-    return res.send('FeatureBot is running!');
-  });
+  console.log('Test endpoint hit!');
+  return res.send('FeatureBot is running!');
+});
 
 // Initialize clients
 const app = new App({
@@ -419,15 +420,14 @@ app.event('app_mention', async ({ event, context, client, say }) => {
   }
 });
 
-// Log all received events to help with debugging
-app.use((args) => {
-  console.log('Received event:', args.payload);
-  args.next();
-});
-
-// Start the app
-(async () => {
-  await app.start(process.env.PORT || 3000);
-  console.log('⚡️ Feature request bot is running on port ' + (process.env.PORT || 3000));
-  console.log('Request URL for Slack events: ' + (process.env.PUBLIC_URL || 'https://your-ngrok-url.ngrok-free.app') + '/slack/events');
-})();
+// Handle serverless function startup with Bolt
+module.exports = async (req, res) => {
+  // Bolt has its own error handling that passes the error to the next middleware
+  try {
+    await app.start();
+    await receiver.processEvent(req, res);
+  } catch (error) {
+    console.error('Error handling request:', error);
+    res.status(500).send('Internal Server Error');
+  }
+};
