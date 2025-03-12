@@ -79,14 +79,17 @@ async function findFeatureInNotion(searchText) {
 // Parse a message for update command pattern
 // Format: @featurebot update feature title to new status
 function parseUpdateCommand(text) {
-  const updateRegex = /update\s+(.*?)\s+to\s+(.*?)(?:\s|$)/i;
-  const match = text.match(updateRegex);
-  
-  if (match) {
-    return {
-      featureQuery: match[1].trim(),
-      newStatus: match[2].trim()
-    };
+  // First check if the text contains "update" and "to"
+  if (text.toLowerCase().includes('update') && text.toLowerCase().includes(' to ')) {
+    // Extract everything between "update" and "to"
+    const parts = text.split(/update\s+/i)[1].split(/\s+to\s+/i);
+    
+    if (parts.length >= 2) {
+      return {
+        featureQuery: parts[0].trim(),
+        newStatus: parts[1].trim().replace(/"/g, '') // Remove any quotes
+      };
+    }
   }
   return null;
 }
@@ -157,7 +160,11 @@ app.event('app_mention', async ({ event, context, client, say }) => {
       const { featureQuery, newStatus } = updateCommand;
       
       // Validate the status
-      if (!validStatuses.some(status => status.toLowerCase() === newStatus.toLowerCase())) {
+      const exactStatusMatch = validStatuses.find(status => 
+        status.toLowerCase() === newStatus.toLowerCase()
+      );
+      
+      if (!exactStatusMatch) {
         await client.chat.postMessage({
           channel: event.channel,
           thread_ts: threadTs,
@@ -223,9 +230,9 @@ app.event('app_mention', async ({ event, context, client, say }) => {
     if (isHelpCommand(messageText)) {
       const helpText = `*FeatureBot Commands:*
   
-• *Create a feature request:* Start a thread with the feature request as the thread title, then tag @featurebot in the thread to save as a feature request
-• *Update status:* @featurebot update [feature name] to [status]
-• *Check statuses:* @featurebot status or @featurebot list features
+• *Create a feature request:* Tag @featurebot in a thread to save the thread as a feature request
+• *Update status:* @featurebot update feature name to status
+• *Check statuses:* @featurebot status (or @featurebot status all to include completed features)
 • *Help:* @featurebot help
 
 *Valid statuses:* ${validStatuses.join(', ')}`;
@@ -241,8 +248,12 @@ app.event('app_mention', async ({ event, context, client, say }) => {
     // Check if it's a status check command
     if (parseStatusCommand(messageText)) {
       // It's a status check command
-      // Query the first 10 features by default, sorted by last edited time
-      const response = await notion.databases.query({
+      // By default, filter out completed features unless specifically requested
+      const showCompleted = messageText.toLowerCase().includes('all') || 
+                           messageText.toLowerCase().includes('completed');
+      
+      // Create query options
+      const queryOptions = {
         database_id: databaseId,
         sorts: [
           {
@@ -251,7 +262,17 @@ app.event('app_mention', async ({ event, context, client, say }) => {
           }
         ],
         page_size: 10
-      });
+      };
+      
+      // Only add filter if we're hiding completed items
+      if (!showCompleted) {
+        queryOptions.filter = {
+          property: "Status",
+          select: {
+            does_not_equal: "Completed"
+          }
+        };
+      }
       
       // Send a "working on it" message
       const loadingMsg = await client.chat.postMessage({
@@ -260,13 +281,31 @@ app.event('app_mention', async ({ event, context, client, say }) => {
         text: "Fetching feature statuses..."
       });
       
-      const formattedResponse = await formatFeaturesForSlack(response.results, client);
-      
-      await client.chat.update({
-        channel: event.channel,
-        ts: loadingMsg.ts,
-        text: formattedResponse
-      });
+      try {
+        // Query the database with or without the filter
+        const response = await notion.databases.query(queryOptions);
+        
+        const formattedResponse = await formatFeaturesForSlack(response.results, client);
+        
+        // Add note about completed features
+        let finalResponse = formattedResponse;
+        if (!showCompleted) {
+          finalResponse += "\n_Completed features are hidden. Use '@featurebot status all' to see everything._";
+        }
+        
+        await client.chat.update({
+          channel: event.channel,
+          ts: loadingMsg.ts,
+          text: finalResponse
+        });
+      } catch (error) {
+        console.error("Error querying Notion database:", error);
+        await client.chat.update({
+          channel: event.channel,
+          ts: loadingMsg.ts,
+          text: "❌ Failed to fetch features: " + error.message
+        });
+      }
       return;
     }
     
@@ -357,11 +396,11 @@ app.event('app_mention', async ({ event, context, client, say }) => {
       ]
     });
     
-    // Confirm in thread with a link to the created item and the page ID
+    // Confirm in thread with a simple confirmation message
     await client.chat.postMessage({
       channel: event.channel,
       thread_ts: threadTs,
-      text: `✅ Feature request saved to Notion database! (ID: ${newPage.id.replace(/-/g, '')})`
+      text: `✅ Feature request saved to Notion database!`
     });
   } catch (error) {
     console.error(error);
