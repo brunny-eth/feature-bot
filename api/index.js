@@ -420,12 +420,32 @@ app.event('app_mention', async ({ event, context, client, say }) => {
   }
 });
 
-// Handle serverless function startup with Bolt
+// Log all received events to help with debugging
+app.use((args) => {
+  console.log('Received event:', args.payload);
+  args.next();
+});
+
+// Initialize the app only once
+let isAppInitialized = false;
+
+// For serverless function handler
 module.exports = async (req, res) => {
-  // Bolt has its own error handling that passes the error to the next middleware
   try {
-    await app.start();
-    await receiver.processEvent(req, res);
+    // Special handling for URL verification (doesn't need app to be started)
+    if (req.method === 'POST' && req.body && req.body.type === 'url_verification') {
+      return res.json({ challenge: req.body.challenge });
+    }
+    
+    // Start the app only once, not on every request
+    if (!isAppInitialized) {
+      await app.start();
+      isAppInitialized = true;
+      console.log('⚡️ Bolt app is running!');
+    }
+    
+    // Process the event
+    await receiver.app.handle(req, res);
   } catch (error) {
     console.error('Error handling request:', error);
     res.status(500).send('Internal Server Error');
