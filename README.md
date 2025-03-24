@@ -1,12 +1,13 @@
-# FeatureBot
+# HelperBot
 
-A Slack bot that captures feature requests from threads and syncs them to Notion. No more lost feature ideas.
+A Slack bot that captures feature and business development requests from threads and syncs them to Notion. No more lost ideas.
 
 ## What it does
 
-- Saves Slack threads as structured feature requests in Notion
-- Updates feature status directly from Slack
-- Lists feature statuses with simple commands
+- Saves Slack threads as structured requests in Notion
+- Supports two types of requests: feature requests and BD (business development) requests
+- Updates request status directly from Slack
+- Lists request statuses with simple commands
 - Preserves thread context and attribution
 
 ## Setup
@@ -23,15 +24,16 @@ A Slack bot that captures feature requests from threads and syncs them to Notion
 SLACK_BOT_TOKEN=xoxb-your-token
 SLACK_SIGNING_SECRET=your-signing-secret
 NOTION_API_KEY=secret_your_notion_key
-NOTION_DATABASE_ID=your_database_id
+NOTION_FEATURE_DATABASE_ID=your_feature_database_id
+NOTION_BD_DATABASE_ID=your_bd_database_id
 ```
 
 ### Quick Deploy
 
 ```bash
 # Clone the repo
-git clone https://github.com/brunny-eth/feature-bot.git
-cd feature-bot
+git clone https://github.com/your-username/helperbot.git
+cd helperbot
 
 # Install dependencies
 npm install
@@ -45,17 +47,22 @@ vercel --prod
 ### Commands
 
 ```
-@featurebot help                         # Show available commands
-@featurebot status                       # List active feature requests
-@featurebot status all                   # Include completed features
-@featurebot update [feature] to [status] # Update feature status
+@helperbot help                         # Show available commands
+@helperbot status                       # List active feature requests
+@helperbot status bd                    # List active BD requests
+@helperbot status all                   # Include completed features
+@helperbot status bd all                # Include completed BD requests
+@helperbot update [request] to [status] # Update feature status
+@helperbot update bd [request] to [status] # Update BD status
 ```
 
-### Creating a Feature Request
+### Creating Requests
 
-1. Start a thread in any channel where FeatureBot is present
-2. Mention `@featurebot` in the thread
-3. The bot will save the entire thread context to Notion
+1. Start a thread in any channel where HelperBot is present
+2. Mention `@helperbot` in the thread
+   - For feature requests: No special keyword needed
+   - For BD requests: Include "bd" in your message
+3. The bot will save the entire thread context to the appropriate Notion database
 4. A confirmation message will be posted
 
 ### Valid Statuses

@@ -25,7 +25,7 @@ receiver.router.post('/slack/events', (req, res, next) => {
 });
 
 receiver.router.get('/test', (req, res) => {
-  return res.send('FeatureBot is running!');
+  return res.send('HelperBot is running!');
 });
 
 // Initialize Slack app
@@ -40,26 +40,56 @@ const notion = new Client({
   timeoutMs: NOTION_TIMEOUT_MS
 });
 
-const databaseId = process.env.NOTION_DATABASE_ID;
+// Database IDs for different request types
+const databaseIds = {
+  feature: process.env.NOTION_FEATURE_DATABASE_ID,
+  bd: process.env.NOTION_BD_DATABASE_ID
+};
 
-// Valid status options
-const validStatuses = ['New', 'In Progress', 'Pending Review', 'Completed', 'Rejected'];
+// Valid status options for each database type
+const validStatuses = {
+  feature: ['New', 'In Progress', 'Pending Review', 'Completed', 'Rejected'],
+  bd: ['Not in CRM yet', 'Added to CRM']
+};
 
-// Test Notion connection at startup
-async function testNotionConnection() {
-  try {
-    const dbInfo = await notion.databases.retrieve({
-      database_id: databaseId
-    });
-    console.log("Notion connection successful:", dbInfo.title);
-    return true;
-  } catch (error) {
-    console.error("Failed to connect to Notion:", error.message);
-    return false;
-  }
+// Determine request type based on message content
+function getRequestType(text) {
+  return text.toLowerCase().includes('bd') ? 'bd' : 'feature';
 }
 
-testNotionConnection();
+// Test Notion connection at startup
+async function testNotionConnections() {
+  const results = {};
+  
+  try {
+    // Test feature database connection
+    const featureDbInfo = await notion.databases.retrieve({
+      database_id: databaseIds.feature
+    });
+    console.log("Feature database connection successful:", featureDbInfo.title);
+    results.feature = true;
+  } catch (error) {
+    console.error("Failed to connect to feature database:", error.message);
+    results.feature = false;
+  }
+  
+  try {
+    // Test BD database connection
+    const bdDbInfo = await notion.databases.retrieve({
+      database_id: databaseIds.bd
+    });
+    console.log("BD database connection successful:", bdDbInfo.title);
+    results.bd = true;
+  } catch (error) {
+    console.error("Failed to connect to BD database:", error.message);
+    results.bd = false;
+  }
+  
+  return results;
+}
+
+// Run connection tests at startup
+testNotionConnections();
 
 // Parse message commands
 function parseCommand(text) {
@@ -72,6 +102,7 @@ function parseCommand(text) {
   if (lowerText.includes('status')) {
     return { 
       type: 'status',
+      requestType: getRequestType(text),
       showCompleted: lowerText.includes('all') || lowerText.includes('completed')
     };
   }
@@ -81,14 +112,18 @@ function parseCommand(text) {
     if (parts.length >= 2) {
       return {
         type: 'update',
+        requestType: getRequestType(text),
         featureQuery: parts[0].trim(),
         newStatus: parts[1].trim().replace(/"/g, '')
       };
     }
   }
   
-  // Default: create feature request
-  return { type: 'create' };
+  // Default: create request
+  return { 
+    type: 'create',
+    requestType: getRequestType(text)
+  };
 }
 
 // Handle app_mention event
@@ -105,16 +140,16 @@ app.event('app_mention', async ({ event, client }) => {
         break;
         
       case 'status':
-        await handleStatusCommand(client, event.channel, threadTs, command.showCompleted);
+        await handleStatusCommand(client, event.channel, threadTs, command.requestType, command.showCompleted);
         break;
         
       case 'update':
-        await handleUpdateCommand(client, event.channel, threadTs, command.featureQuery, command.newStatus);
+        await handleUpdateCommand(client, event.channel, threadTs, command.requestType, command.featureQuery, command.newStatus);
         break;
         
       case 'create':
       default:
-        await handleCreateCommand(client, event.channel, threadTs);
+        await handleCreateCommand(client, event.channel, threadTs, command.requestType);
     }
   } catch (error) {
     console.error('Error handling command:', error);
@@ -133,11 +168,21 @@ app.event('app_mention', async ({ event, client }) => {
 
 // Help command handler
 async function handleHelpCommand(client, channel, threadTs) {
-  const helpText = `*FeatureBot Commands:*\n
-- *Create a feature request:* Tag @featurebot in a thread to save the thread as a feature request
-- *Update status:* @featurebot update [feature] to [status]
-- *Check statuses:* @featurebot status (or @featurebot status all to include completed features)
-- *Help:* @featurebot help
+  const helpText = `*HelperBot Commands:*\n
+- *Create a request:* Tag @helperbot in a thread to save the thread
+  - Include "bd" in your message for business development requests
+  - Otherwise it will be saved as a feature request
+
+- *Update status:* @helperbot update [title] to [status]
+  - Include "bd" to update a BD request
+
+- *Check statuses:* 
+  - @helperbot status (features only)
+  - @helperbot status bd (BD requests only)
+  - Add "all" to include completed requests
+
+- *Help:* @helperbot help
+
 *Valid statuses:* New, In Progress, Pending Review, Completed, Rejected`;
 
   await client.chat.postMessage({
@@ -149,18 +194,20 @@ async function handleHelpCommand(client, channel, threadTs) {
 }
 
 // Status command handler
-async function handleStatusCommand(client, channel, threadTs, showCompleted) {
+async function handleStatusCommand(client, channel, threadTs, requestType, showCompleted) {
+  const dbType = requestType.charAt(0).toUpperCase() + requestType.slice(1);
+  
   const loadingMessage = await client.chat.postMessage({
     channel: channel,
     thread_ts: threadTs,
-    text: "Fetching feature statuses...",
+    text: `Fetching ${dbType} statuses...`,
     unfurl_links: false
   });
 
   try {
     // Create query options
     const queryOptions = {
-      database_id: databaseId,
+      database_id: databaseIds[requestType],
       sorts: [{ timestamp: "last_edited_time", direction: "descending" }],
       page_size: 10
     };
@@ -181,10 +228,10 @@ async function handleStatusCommand(client, channel, threadTs, showCompleted) {
     const response = await Promise.race([responsePromise, timeoutPromise]);
     
     // Format response
-    let formattedResponse = "*Feature Requests Status:*\n\n";
+    let formattedResponse = `*${dbType} Requests Status:*\n\n`;
     
     if (response.results.length === 0) {
-      formattedResponse += "No features found.";
+      formattedResponse += "No requests found.";
     } else {
       response.results.forEach((page) => {
         try {
@@ -192,13 +239,13 @@ async function handleStatusCommand(client, channel, threadTs, showCompleted) {
           const status = page.properties.Status?.select?.name || "Unknown";
           formattedResponse += `• *${title}* - ${status}\n`;
         } catch (err) {
-          formattedResponse += `• *Error formatting feature*\n`;
+          formattedResponse += `• *Error formatting request*\n`;
         }
       });
     }
     
     if (!showCompleted) {
-      formattedResponse += "\n_Completed features are hidden. Use '@featurebot status all' to see everything._";
+      formattedResponse += `\n_Completed ${requestType} requests are hidden. Use '@helperbot status ${requestType} all' to see everything._`;
     }
     
     await client.chat.update({
@@ -208,10 +255,12 @@ async function handleStatusCommand(client, channel, threadTs, showCompleted) {
       unfurl_links: false
     });
   } catch (error) {
-    let errorMessage = "❌ Failed to fetch features";
+    let errorMessage = `❌ Failed to fetch ${requestType} requests`;
     
     if (error.message.includes('timed out')) {
       errorMessage += ": Request timed out. The Notion API might be experiencing delays.";
+    } else if (error.code === 'notFound') {
+      errorMessage += ": Database not found. Please check your configuration.";
     } else {
       errorMessage += `: ${error.message}`;
     }
@@ -226,10 +275,11 @@ async function handleStatusCommand(client, channel, threadTs, showCompleted) {
 }
 
 // Update command handler
-async function handleUpdateCommand(client, channel, threadTs, featureQuery, newStatus) {
+async function handleUpdateCommand(client, channel, threadTs, requestType, featureQuery, newStatus) {
   try {
-    // Validate status
-    const exactStatusMatch = validStatuses.find(status => 
+    // Validate status based on request type
+    const statusOptions = validStatuses[requestType];
+    const exactStatusMatch = statusOptions.find(status => 
       status.toLowerCase() === newStatus.toLowerCase()
     );
     
@@ -237,15 +287,15 @@ async function handleUpdateCommand(client, channel, threadTs, featureQuery, newS
       await client.chat.postMessage({
         channel: channel,
         thread_ts: threadTs,
-        text: `❌ Invalid status: "${newStatus}". Valid statuses are: ${validStatuses.join(', ')}`,
+        text: `❌ Invalid status: "${newStatus}". Valid statuses for ${requestType} are: ${statusOptions.join(', ')}`,
         unfurl_links: false
       });
       return;
     }
     
-    // Find the feature
+    // Find the item
     const response = await notion.databases.query({
-      database_id: databaseId,
+      database_id: databaseIds[requestType],
       filter: {
         property: 'Title',
         rich_text: { contains: featureQuery }
@@ -257,7 +307,7 @@ async function handleUpdateCommand(client, channel, threadTs, featureQuery, newS
       await client.chat.postMessage({
         channel: channel,
         thread_ts: threadTs,
-        text: `❌ No feature found matching "${featureQuery}"`,
+        text: `❌ No ${requestType} request found matching "${featureQuery}"`,
         unfurl_links: false
       });
       return;
@@ -279,7 +329,7 @@ async function handleUpdateCommand(client, channel, threadTs, featureQuery, newS
       return;
     }
     
-    // Update the feature
+    // Update the item
     const feature = response.results[0];
     const currentStatus = feature.properties.Status.select?.name || "Unknown";
     const title = feature.properties.Title.title[0]?.text.content || "Untitled";
@@ -300,17 +350,27 @@ async function handleUpdateCommand(client, channel, threadTs, featureQuery, newS
       unfurl_links: false
     });
   } catch (error) {
+    let errorMessage = `❌ Failed to update ${requestType} request status`;
+    
+    if (error.message.includes('timed out')) {
+      errorMessage += ": Request timed out. The Notion API might be experiencing delays.";
+    } else if (error.code === 'notFound') {
+      errorMessage += ": Item or database not found. Please check your request.";
+    } else {
+      errorMessage += `: ${error.message}`;
+    }
+    
     await client.chat.postMessage({
       channel: channel,
       thread_ts: threadTs,
-      text: `❌ Failed to update feature status: ${error.message}`,
+      text: errorMessage,
       unfurl_links: false
     });
   }
 }
 
 // Create command handler
-async function handleCreateCommand(client, channel, threadTs) {
+async function handleCreateCommand(client, channel, threadTs, requestType) {
   try {
     // Get thread info
     const replies = await client.conversations.replies({
@@ -336,10 +396,12 @@ async function handleCreateCommand(client, channel, threadTs) {
       channel: channel
     });
     
-    // Format feature request
-    let featureTitle = originalMessage.text.split('\n')[0].substring(0, 80);
-    if (!featureTitle.toLowerCase().includes('feature')) {
-      featureTitle = "Feature request: " + featureTitle;
+    // Format request title
+    let requestTitle = originalMessage.text.split('\n')[0].substring(0, 80);
+    const requestTypeCapitalized = requestType.charAt(0).toUpperCase() + requestType.slice(1);
+    
+    if (!requestTitle.toLowerCase().includes(requestType)) {
+      requestTitle = `${requestTypeCapitalized} request: ${requestTitle}`;
     }
     
     // Build description from thread
@@ -348,7 +410,7 @@ async function handleCreateCommand(client, channel, threadTs) {
     if (threadMessages.length > 0) {
       fullDescription += "*Additional context from thread:*\n";
       for (const msg of threadMessages) {
-        if (!msg.text || msg.text.includes('@featurebot')) continue;
+        if (!msg.text || msg.text.includes('@helperbot')) continue;
         
         try {
           const userInfo = await client.users.info({ user: msg.user });
@@ -359,66 +421,91 @@ async function handleCreateCommand(client, channel, threadTs) {
       }
     }
     
-    // Create Notion page
-    await notion.pages.create({
-      parent: { database_id: databaseId },
-      properties: {
-        Title: {
-          title: [{ text: { content: featureTitle } }]
-        },
-        Status: {
-          select: { name: "New" }
-        },
-        "Slack URL": {
-          url: `https://slack.com/archives/${channel}/p${threadTs.replace('.', '')}`
-        },
-        "Date Created": {
-          date: {
-            start: new Date(parseInt(originalMessage.ts) * 1000).toISOString()
-          }
-        }
-      },
-      children: [
-        {
-          object: "block",
-          type: "paragraph",
-          paragraph: {
-            rich_text: [
-              {
-                type: "text",
-                text: {
-                  content: fullDescription
-                }
+    // Create Notion page with retry logic
+    const maxRetries = 3;
+    let attempt = 0;
+    let success = false;
+    
+    while (attempt < maxRetries && !success) {
+      try {
+        attempt++;
+        await notion.pages.create({
+          parent: { database_id: databaseIds[requestType] },
+          properties: {
+            Title: {
+              title: [{ text: { content: requestTitle } }]
+            },
+            Status: {
+              select: { name: requestType === 'bd' ? "Not in CRM yet" : "New" }
+            },
+            "Slack URL": {
+              url: `https://slack.com/archives/${channel}/p${threadTs.replace('.', '')}`
+            },
+            "Date Created": {
+              date: {
+                start: new Date(parseInt(originalMessage.ts) * 1000).toISOString()
               }
-            ]
-          }
-        },
-        {
-          object: "block",
-          type: "paragraph",
-          paragraph: {
-            rich_text: [
-              {
-                type: "text",
-                text: {
-                  content: `Requested in #${channelInfo.channel?.name || channel} on ${new Date(parseInt(threadTs) * 1000).toLocaleString()}`
-                }
+            }
+          },
+          children: [
+            {
+              object: "block",
+              type: "paragraph",
+              paragraph: {
+                rich_text: [
+                  {
+                    type: "text",
+                    text: {
+                      content: fullDescription
+                    }
+                  }
+                ]
               }
-            ]
-          }
+            },
+            {
+              object: "block",
+              type: "paragraph",
+              paragraph: {
+                rich_text: [
+                  {
+                    type: "text",
+                    text: {
+                      content: `Requested in #${channelInfo.channel?.name || channel} on ${new Date(parseInt(threadTs) * 1000).toLocaleString()}`
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        });
+        success = true;
+      } catch (error) {
+        if (attempt >= maxRetries) {
+          throw error;
         }
-      ]
-    });
+        console.error(`Create attempt ${attempt} failed: ${error.message}. Retrying...`);
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retry
+      }
+    }
     
     // Confirm in thread
     await client.chat.postMessage({
       channel: channel,
       thread_ts: threadTs,
-      text: `✅ Feature request saved to Notion database!`,
+      text: `✅ ${requestTypeCapitalized} request saved to Notion database!`,
       unfurl_links: false
     });
   } catch (error) {
-    let errorMessage = `❌ Failed to save feature request: ${error.message}`;
+    let errorMessage = `❌ Failed to save ${requestType} request`;
+    
+    if (error.message.includes('timed out')) {
+      errorMessage += ": Request timed out. The Notion API might be experiencing delays.";
+    } else if (error.code === 'notFound') {
+      errorMessage += ": Database not found. Please check your configuration.";
+    } else {
+      errorMessage += `: ${error.message}`;
+    }
+    
     await client.chat.postMessage({
       channel: channel,
       thread_ts: threadTs,

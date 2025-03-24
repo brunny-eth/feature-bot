@@ -1,5 +1,5 @@
 {
-  "name": "feature-bot",
+  "name": "helperbot",
   "version": "1.0.0",
   "main": "api/index.js",
   "scripts": {
@@ -12,7 +12,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "Slack bot for capturing feature requests to Notion",
+  "description": "Slack bot for capturing feature and BD requests to Notion",
   "dependencies": {
     "@notionhq/client": "^2.2.16",
     "@slack/bolt": "^4.2.1",
