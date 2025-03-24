@@ -15,7 +15,7 @@ const receiver = new ExpressReceiver({
     events: '/slack/events'
   }
 });
-
+ 
 // Add challenge handling
 receiver.router.post('/slack/events', (req, res, next) => {
   if (req.body && req.body.type === 'url_verification') {
@@ -54,7 +54,12 @@ const validStatuses = {
 
 // Determine request type based on message content
 function getRequestType(text) {
-  return text.toLowerCase().includes('bd') ? 'bd' : 'feature';
+  console.log(`Checking request type for message: "${text}"`);
+  const lowerText = text.toLowerCase();
+  const isBdRequest = lowerText.includes('bd') || lowerText.includes('business development');
+  const requestType = isBdRequest ? 'bd' : 'feature';
+  console.log(`Detected request type: ${requestType}`);
+  return requestType;
 }
 
 // Test Notion connection at startup
@@ -93,6 +98,7 @@ testNotionConnections();
 
 // Parse message commands
 function parseCommand(text) {
+  const requestType = getRequestType(text);
   const lowerText = text.toLowerCase();
   
   if (lowerText.includes('help') || lowerText.includes('commands')) {
@@ -102,7 +108,7 @@ function parseCommand(text) {
   if (lowerText.includes('status')) {
     return { 
       type: 'status',
-      requestType: getRequestType(text),
+      requestType: requestType,
       showCompleted: lowerText.includes('all') || lowerText.includes('completed')
     };
   }
@@ -112,7 +118,7 @@ function parseCommand(text) {
     if (parts.length >= 2) {
       return {
         type: 'update',
-        requestType: getRequestType(text),
+        requestType: requestType,
         featureQuery: parts[0].trim(),
         newStatus: parts[1].trim().replace(/"/g, '')
       };
@@ -122,16 +128,17 @@ function parseCommand(text) {
   // Default: create request
   return { 
     type: 'create',
-    requestType: getRequestType(text)
+    requestType: requestType
   };
 }
 
 // Handle app_mention event
 app.event('app_mention', async ({ event, client }) => {
   try {
-    console.log('Received app_mention event');
+    console.log('Received app_mention event:', event.text);
     const threadTs = event.thread_ts || event.ts;
     const command = parseCommand(event.text);
+    console.log('Parsed command:', command);
     
     // Handle different command types
     switch (command.type) {
@@ -173,8 +180,9 @@ async function handleHelpCommand(client, channel, threadTs) {
   - Include "bd" in your message for business development requests
   - Otherwise it will be saved as a feature request
 
-- *Update status:* @helperbot update [title] to [status]
-  - Include "bd" to update a BD request
+- *Update status:* 
+  - @helperbot update [feature] to [status]
+  - @helperbot update bd [title] to [status]
 
 - *Check statuses:* 
   - @helperbot status (features only)
@@ -183,7 +191,9 @@ async function handleHelpCommand(client, channel, threadTs) {
 
 - *Help:* @helperbot help
 
-*Valid statuses:* New, In Progress, Pending Review, Completed, Rejected`;
+*Valid statuses:*
+- Feature requests: ${validStatuses.feature.join(', ')}
+- BD requests: ${validStatuses.bd.join(', ')}`;
 
   await client.chat.postMessage({
     channel: channel,
@@ -205,17 +215,29 @@ async function handleStatusCommand(client, channel, threadTs, requestType, showC
   });
 
   try {
+    // Get the appropriate database ID
+    const dbId = databaseIds[requestType];
+    
+    if (!dbId) {
+      throw new Error(`No database ID configured for ${requestType} requests`);
+    }
+    
+    console.log(`Querying ${requestType} database with ID: ${dbId}`);
+    
     // Create query options
     const queryOptions = {
-      database_id: databaseIds[requestType],
+      database_id: dbId,
       sorts: [{ timestamp: "last_edited_time", direction: "descending" }],
       page_size: 10
     };
     
     if (!showCompleted) {
+      // Use the appropriate statuses for each database type
+      const completedStatus = requestType === 'bd' ? 'Added to CRM' : 'Completed';
+      
       queryOptions.filter = {
         property: "Status",
-        select: { does_not_equal: "Completed" }
+        select: { does_not_equal: completedStatus }
       };
     }
     
@@ -245,7 +267,8 @@ async function handleStatusCommand(client, channel, threadTs, requestType, showC
     }
     
     if (!showCompleted) {
-      formattedResponse += `\n_Completed ${requestType} requests are hidden. Use '@helperbot status ${requestType} all' to see everything._`;
+      const completedStatus = requestType === 'bd' ? 'Added to CRM' : 'Completed';
+      formattedResponse += `\n_${completedStatus} ${requestType} requests are hidden. Use '@helperbot status ${requestType} all' to see everything._`;
     }
     
     await client.chat.update({
@@ -265,6 +288,8 @@ async function handleStatusCommand(client, channel, threadTs, requestType, showC
       errorMessage += `: ${error.message}`;
     }
     
+    console.error(`Error fetching ${requestType} status:`, error);
+    
     await client.chat.update({
       channel: channel,
       ts: loadingMessage.ts,
@@ -277,6 +302,15 @@ async function handleStatusCommand(client, channel, threadTs, requestType, showC
 // Update command handler
 async function handleUpdateCommand(client, channel, threadTs, requestType, featureQuery, newStatus) {
   try {
+    console.log(`Updating ${requestType} request: "${featureQuery}" to status: "${newStatus}"`);
+    
+    // Get the appropriate database ID
+    const dbId = databaseIds[requestType];
+    
+    if (!dbId) {
+      throw new Error(`No database ID configured for ${requestType} requests`);
+    }
+    
     // Validate status based on request type
     const statusOptions = validStatuses[requestType];
     const exactStatusMatch = statusOptions.find(status => 
@@ -295,7 +329,7 @@ async function handleUpdateCommand(client, channel, threadTs, requestType, featu
     
     // Find the item
     const response = await notion.databases.query({
-      database_id: databaseIds[requestType],
+      database_id: dbId,
       filter: {
         property: 'Title',
         rich_text: { contains: featureQuery }
@@ -330,12 +364,12 @@ async function handleUpdateCommand(client, channel, threadTs, requestType, featu
     }
     
     // Update the item
-    const feature = response.results[0];
-    const currentStatus = feature.properties.Status.select?.name || "Unknown";
-    const title = feature.properties.Title.title[0]?.text.content || "Untitled";
+    const item = response.results[0];
+    const currentStatus = item.properties.Status.select?.name || "Unknown";
+    const title = item.properties.Title.title[0]?.text.content || "Untitled";
     
     await notion.pages.update({
-      page_id: feature.id,
+      page_id: item.id,
       properties: {
         Status: {
           select: { name: exactStatusMatch }
@@ -360,6 +394,8 @@ async function handleUpdateCommand(client, channel, threadTs, requestType, featu
       errorMessage += `: ${error.message}`;
     }
     
+    console.error(`Error updating ${requestType} status:`, error);
+    
     await client.chat.postMessage({
       channel: channel,
       thread_ts: threadTs,
@@ -372,6 +408,8 @@ async function handleUpdateCommand(client, channel, threadTs, requestType, featu
 // Create command handler
 async function handleCreateCommand(client, channel, threadTs, requestType) {
   try {
+    console.log(`Creating ${requestType} request in thread ${threadTs}`);
+    
     // Get thread info
     const replies = await client.conversations.replies({
       channel: channel,
@@ -421,6 +459,17 @@ async function handleCreateCommand(client, channel, threadTs, requestType) {
       }
     }
     
+    // Select the database ID based on request type
+    const dbId = databaseIds[requestType];
+    console.log(`Using database ID: ${dbId} for ${requestType} request`);
+    
+    if (!dbId) {
+      throw new Error(`No database ID configured for ${requestType} requests`);
+    }
+    
+    // Determine initial status based on request type
+    const initialStatus = requestType === 'bd' ? validStatuses.bd[0] : validStatuses.feature[0];
+    
     // Create Notion page with retry logic
     const maxRetries = 3;
     let attempt = 0;
@@ -430,22 +479,18 @@ async function handleCreateCommand(client, channel, threadTs, requestType) {
       try {
         attempt++;
         await notion.pages.create({
-          parent: { database_id: databaseIds[requestType] },
+          parent: { database_id: dbId },
           properties: {
             Title: {
               title: [{ text: { content: requestTitle } }]
             },
             Status: {
-              select: { name: requestType === 'bd' ? "Not in CRM yet" : "New" }
+              select: { name: initialStatus }
             },
             "Slack URL": {
               url: `https://slack.com/archives/${channel}/p${threadTs.replace('.', '')}`
-            },
-            "Date Created": {
-              date: {
-                start: new Date(parseInt(originalMessage.ts) * 1000).toISOString()
-              }
             }
+            // Remove Date Created property if it doesn't exist in your database
           },
           children: [
             {
@@ -479,6 +524,7 @@ async function handleCreateCommand(client, channel, threadTs, requestType) {
           ]
         });
         success = true;
+        console.log(`Successfully created ${requestType} request in Notion`);
       } catch (error) {
         if (attempt >= maxRetries) {
           throw error;
@@ -502,9 +548,13 @@ async function handleCreateCommand(client, channel, threadTs, requestType) {
       errorMessage += ": Request timed out. The Notion API might be experiencing delays.";
     } else if (error.code === 'notFound') {
       errorMessage += ": Database not found. Please check your configuration.";
+    } else if (error.message.includes('Date Created')) {
+      errorMessage += ": 'Date Created' property issue. Please add this property to your Notion database.";
     } else {
       errorMessage += `: ${error.message}`;
     }
+    
+    console.error(`Error creating ${requestType} request:`, error);
     
     await client.chat.postMessage({
       channel: channel,
