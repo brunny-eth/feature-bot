@@ -565,13 +565,13 @@ async function handleCreateCommand(client, channel, threadTs, requestType) {
   }
 }
 
-// For serverless function handler
+// For serverless function handles
 module.exports = async (req, res) => {
   // Special handling for URL verification
   if (req.method === 'POST' && req.body && req.body.type === 'url_verification') {
     return res.json({ challenge: req.body.challenge });
   }
-  
+   
   // Use the receiver's request handler
   try {
     await receiver.app.handle(req, res);
