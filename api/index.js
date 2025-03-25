@@ -107,6 +107,7 @@ testNotionConnections();
 
 // Parse message commands
 function parseCommand(text) {
+  // Check for request type first with the modified text
   const requestType = getRequestType(text);
   const lowerText = text.toLowerCase();
   
@@ -146,7 +147,9 @@ app.event('app_mention', async ({ event, client }) => {
     console.log('Received app_mention event with text:', event.text);
     const threadTs = event.thread_ts || event.ts;
     
-    // Get all messages in the thread for debugging
+    const isInThread = event.thread_ts && event.ts !== event.thread_ts;
+    
+    // Get all messages in the thread for context
     const replies = await client.conversations.replies({
       channel: event.channel,
       ts: threadTs
@@ -157,9 +160,28 @@ app.event('app_mention', async ({ event, client }) => {
       console.log(`Message ${i}: ${msg.text}`);
     });
     
-    const command = parseCommand(event.text);
+    let commandText = event.text;
+    
+    // If it's in a thread, also check the original message for BD context
+    if (isInThread && replies.messages && replies.messages.length > 0) {
+      const originalMessage = replies.messages[0];
+      console.log('Original thread message:', originalMessage.text);
+      
+      // Check if the original message contains BD indicators
+      const originalRequestType = getRequestType(originalMessage.text);
+      
+      // If the original message is a BD request, enforce that type
+      if (originalRequestType === 'bd') {
+        // Modify the command text to include "bd" to force BD detection
+        commandText = `bd ${commandText}`;
+        console.log('Thread contains BD context, modified command text:', commandText);
+      }
+    }
+    
+    // Parse the command with the potentially modified text
+    const command = parseCommand(commandText);
     console.log('Parsed command:', command);
-        
+            
     // Handle different command types
     switch (command.type) {
       case 'help':
