@@ -127,16 +127,26 @@ function parseCommand(text) {
   }
   
   if (lowerText.includes('update') && lowerText.includes(' to ')) {
-    const parts = text.split(/update\s+/i)[1].split(/\s+to\s+/i);
-    if (parts.length >= 2) {
-      // Extract the new status and remove any mention of the bot
-      let newStatus = parts[1].trim().replace(/"/g, '');
+    // Find the position of 'update' and ' to ' in the text
+    const updatePos = lowerText.indexOf('update');
+    const toPos = lowerText.indexOf(' to ', updatePos);
+    
+    if (toPos > updatePos) {
+      // Extract feature query (everything between 'update' and ' to ')
+      const featureQuery = text.substring(updatePos + 7, toPos).trim();
+      
+      // Extract status (everything after ' to ')
+      let newStatus = text.substring(toPos + 4).trim();
+      
+      // Remove any bot mentions
       newStatus = newStatus.replace(/<@[A-Z0-9]+>/g, '').trim();
+      
+      console.log(`Parsed update command - Feature: "${featureQuery}", Status: "${newStatus}"`);
       
       return {
         type: 'update',
         requestType: requestType,
-        featureQuery: parts[0].trim(),
+        featureQuery: featureQuery,
         newStatus: newStatus
       };
     }
@@ -252,8 +262,6 @@ async function handleHelpCommand(client, channel, threadTs) {
 - *Update status:* 
   • @helperbot update [feature] to [status]
   • @helperbot update bd [title] to [status]
-  • ⚠️ IMPORTANT: @helperbot must be at the START of your message
-  • ⚠️ IMPORTANT: Status values are case-sensitive (use correct capitalization)
 
 - *Check statuses:* 
   • @helperbot status (features only)
