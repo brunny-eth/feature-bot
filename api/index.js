@@ -499,34 +499,31 @@ async function handleCreateCommand(client, channel, threadTs, requestType) {
       channel: channel
     });
     
-    // Format request title
-    let requestTitle = originalMessage.text.split('\n')[0].substring(0, 80);
-    const requestTypeCapitalized = requestType.charAt(0).toUpperCase() + requestType.slice(1);
+   // Format request title
+      let requestTitle = originalMessage.text.split('\n')[0].substring(0, 80);
+      const requestTypeCapitalized = requestType.charAt(0).toUpperCase() + requestType.slice(1);
 
-    // Extract project/team name for BD requests
-    if (requestType === 'bd') {
-      // Look for patterns like "add X to bd" or similar
-      const addToBdRegex = /add\s+([A-Za-z0-9]+(?:[A-Za-z0-9._-]*[A-Za-z0-9]+)?)\s+to\s+bd/i;
-      const match = originalMessage.text.match(addToBdRegex);
-      
-      if (match && match[1]) {
-        // We found a project/team name to add
-        const projectName = match[1];
-        requestTitle = `Add ${projectName} to BD`;
-      } else {
-        // Clean up any Slack user IDs if present
-        requestTitle = requestTitle.replace(/<@[A-Z0-9]+>/g, '').trim();
+      // Clean up any Slack user IDs for ALL request types
+      requestTitle = requestTitle.replace(/<@[A-Z0-9]+>/g, '').trim();
+
+      // Extract project/team name for BD requests
+      if (requestType === 'bd') {
+        // Look for patterns like "add X to bd" or similar
+        const addToBdRegex = /add\s+([A-Za-z0-9]+(?:[A-Za-z0-9._-]*[A-Za-z0-9]+)?)\s+to\s+bd/i;
+        const match = originalMessage.text.match(addToBdRegex);
         
-        // Generic BD request title if no specific pattern matched
-        if (!requestTitle.toLowerCase().includes("bd")) {
+        if (match && match[1]) {
+          // We found a project/team name to add
+          const projectName = match[1];
+          requestTitle = `Add ${projectName} to BD`;
+        } else if (!requestTitle.toLowerCase().includes("bd")) {
+          // Generic BD request title if no specific pattern matched
           requestTitle = `${requestTypeCapitalized} request: ${requestTitle}`;
         }
+      } else if (!requestTitle.toLowerCase().includes(requestType)) {
+        // For feature requests
+        requestTitle = `${requestTypeCapitalized} request: ${requestTitle}`;
       }
-    } else if (!requestTitle.toLowerCase().includes(requestType)) {
-      // For feature requests
-      requestTitle = `${requestTypeCapitalized} request: ${requestTitle}`;
-    } 
-    
     // Build description from thread
     let fullDescription = `*Original request by ${requesterInfo.user.real_name}:*\n${originalMessage.text}\n\n`;
     
