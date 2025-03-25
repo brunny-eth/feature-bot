@@ -434,13 +434,32 @@ async function handleCreateCommand(client, channel, threadTs, requestType) {
       channel: channel
     });
     
-    // Format request title
-    let requestTitle = originalMessage.text.split('\n')[0].substring(0, 80);
-    const requestTypeCapitalized = requestType.charAt(0).toUpperCase() + requestType.slice(1);
-    
+   // Format request title
+let requestTitle = originalMessage.text.split('\n')[0].substring(0, 80);
+const requestTypeCapitalized = requestType.charAt(0).toUpperCase() + requestType.slice(1);
+
+// NEW CODE: Extract team name for BD requests
+if (requestType === 'bd') {
+  // Look for patterns like "add X to bd" or "add X to business development"
+  const addToBdRegex = /add\s+(\w+)\s+to\s+(bd|business development)/i;
+  const match = originalMessage.text.match(addToBdRegex);
+  
+  if (match && match[1]) {
+    // We found a team name to add
+    const teamName = match[1];
+    requestTitle = `${requestTypeCapitalized} request: Add ${teamName}`;
+  } else if (requestTitle.includes('<@')) {
+    // Clean up any Slack user IDs if present
+    requestTitle = requestTitle.replace(/<@[A-Z0-9]+>/g, '').trim();
     if (!requestTitle.toLowerCase().includes(requestType)) {
       requestTitle = `${requestTypeCapitalized} request: ${requestTitle}`;
     }
+  } else if (!requestTitle.toLowerCase().includes(requestType)) {
+    requestTitle = `${requestTypeCapitalized} request: ${requestTitle}`;
+  }
+} else if (!requestTitle.toLowerCase().includes(requestType)) {
+  requestTitle = `${requestTypeCapitalized} request: ${requestTitle}`;
+}
     
     // Build description from thread
     let fullDescription = `*Original request by ${requesterInfo.user.real_name}:*\n${originalMessage.text}\n\n`;
@@ -478,20 +497,24 @@ async function handleCreateCommand(client, channel, threadTs, requestType) {
     while (attempt < maxRetries && !success) {
       try {
         attempt++;
-        await notion.pages.create({
-          parent: { database_id: dbId },
-          properties: {
-            Title: {
-              title: [{ text: { content: requestTitle } }]
+          await notion.pages.create({
+            parent: { database_id: dbId },
+            properties: {
+              Title: {
+                title: [{ text: { content: requestTitle } }]
+              },
+              Status: {
+                select: { name: initialStatus }
+              },
+              "Slack URL": {
+                url: `https://slack.com/archives/${channel}/p${threadTs.replace('.', '')}`
+              },
+              "Date Created": {
+                date: { 
+                  start: new Date().toISOString() 
+                }
+              }
             },
-            Status: {
-              select: { name: initialStatus }
-            },
-            "Slack URL": {
-              url: `https://slack.com/archives/${channel}/p${threadTs.replace('.', '')}`
-            }
-            // Remove Date Created property if it doesn't exist in your database
-          },
           children: [
             {
               object: "block",
