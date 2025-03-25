@@ -51,7 +51,7 @@ const databaseIds = {
 
 // Valid status options for each database type
 const validStatuses = {
-  feature: ['New', 'In Progress', 'Pending Review', 'Completed', 'Rejected'],
+  feature: ['New', 'WIP', 'Reviewing', 'Completed', 'Rejected'],
   bd: ['Not in CRM yet', 'Added to CRM']
 };
 
@@ -140,6 +140,13 @@ function parseCommand(text) {
       
       // Remove any bot mentions
       newStatus = newStatus.replace(/<@[A-Z0-9]+>/g, '').trim();
+      
+      // For feature requests, extract just the first word as the status
+      if (getRequestType(text) === 'feature') {
+        // Split by spaces and get the first word
+        const statusWord = newStatus.split(/\s+/)[0];
+        newStatus = statusWord;
+      }
       
       console.log(`Parsed update command - Feature: "${featureQuery}", Status: "${newStatus}"`);
       
@@ -262,6 +269,7 @@ async function handleHelpCommand(client, channel, threadTs) {
 - *Update status:* 
   • @helperbot update [feature] to [status]
   • @helperbot update bd [title] to [status]
+  • ⚠️ IMPORTANT: @helperbot must be at the START of your message
 
 - *Check statuses:* 
   • @helperbot status (features only)
