@@ -150,6 +150,26 @@ app.event('app_mention', async ({ event, client }) => {
     console.log('Received app_mention event with text:', event.text);
     const threadTs = event.thread_ts || event.ts;
     
+    // Check if this thread was recently processed to prevent duplicates
+    const threadKey = `${channel}-${threadTs}-${requestType}`;
+    const lastProcessed = processedThreads.get(threadKey);
+    const now = Date.now();
+    
+    if (lastProcessed && (now - lastProcessed) < DUPLICATE_PREVENTION_WINDOW_MS) {
+      console.log(`Skipping duplicate request for thread ${threadTs} (processed ${now - lastProcessed}ms ago)`);
+      return; 
+    }
+    
+    // Mark this thread as being processed
+    processedThreads.set(threadKey, now);
+    
+    // Clean up old entries from the map to prevent memory leaks
+    for (const [key, timestamp] of processedThreads.entries()) {
+      if (now - timestamp > DUPLICATE_PREVENTION_WINDOW_MS) {
+        processedThreads.delete(key);
+      }
+    }
+
     const isInThread = event.thread_ts && event.ts !== event.thread_ts;
     
     // Get all messages in the thread for context
@@ -454,26 +474,6 @@ async function handleUpdateCommand(client, channel, threadTs, requestType, featu
 async function handleCreateCommand(client, channel, threadTs, requestType) {
   try {
     console.log(`Creating ${requestType} request in thread ${threadTs}`);
-    
-    // Check if this thread was recently processed to prevent duplicates
-    const threadKey = `${channel}-${threadTs}-${requestType}`;
-    const lastProcessed = processedThreads.get(threadKey);
-    const now = Date.now();
-    
-    if (lastProcessed && (now - lastProcessed) < DUPLICATE_PREVENTION_WINDOW_MS) {
-      console.log(`Skipping duplicate request for thread ${threadTs} (processed ${now - lastProcessed}ms ago)`);
-      return; 
-    }
-    
-    // Mark this thread as being processed
-    processedThreads.set(threadKey, now);
-    
-    // Clean up old entries from the map to prevent memory leaks
-    for (const [key, timestamp] of processedThreads.entries()) {
-      if (now - timestamp > DUPLICATE_PREVENTION_WINDOW_MS) {
-        processedThreads.delete(key);
-      }
-    }
     
     // Get thread info
     const replies = await client.conversations.replies({
