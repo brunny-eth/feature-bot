@@ -56,7 +56,16 @@ const validStatuses = {
 function getRequestType(text) {
   console.log(`Checking request type for message: "${text}"`);
   const lowerText = text.toLowerCase();
-  const isBdRequest = lowerText.includes('bd') || lowerText.includes('business development');
+  
+  const bdPatterns = [
+    /\bbd\b/, 
+    /\bbusiness development\b/,
+    /add .* to bd/,
+    /add .* to business development/
+  ];
+  
+  const isBdRequest = bdPatterns.some(pattern => pattern.test(lowerText));
+  
   const requestType = isBdRequest ? 'bd' : 'feature';
   console.log(`Detected request type: ${requestType}`);
   return requestType;
@@ -132,14 +141,25 @@ function parseCommand(text) {
   };
 }
 
-// Handle app_mention event
 app.event('app_mention', async ({ event, client }) => {
   try {
-    console.log('Received app_mention event:', event.text);
+    console.log('Received app_mention event with text:', event.text);
     const threadTs = event.thread_ts || event.ts;
+    
+    // Get all messages in the thread for debugging
+    const replies = await client.conversations.replies({
+      channel: event.channel,
+      ts: threadTs
+    });
+    
+    console.log('Thread messages:');
+    replies.messages.forEach((msg, i) => {
+      console.log(`Message ${i}: ${msg.text}`);
+    });
+    
     const command = parseCommand(event.text);
     console.log('Parsed command:', command);
-    
+        
     // Handle different command types
     switch (command.type) {
       case 'help':
@@ -434,32 +454,33 @@ async function handleCreateCommand(client, channel, threadTs, requestType) {
       channel: channel
     });
     
-   // Format request title
-let requestTitle = originalMessage.text.split('\n')[0].substring(0, 80);
-const requestTypeCapitalized = requestType.charAt(0).toUpperCase() + requestType.slice(1);
+    // Format request title
+    let requestTitle = originalMessage.text.split('\n')[0].substring(0, 80);
+    const requestTypeCapitalized = requestType.charAt(0).toUpperCase() + requestType.slice(1);
 
-// NEW CODE: Extract team name for BD requests
-if (requestType === 'bd') {
-  // Look for patterns like "add X to bd" or "add X to business development"
-  const addToBdRegex = /add\s+(\w+)\s+to\s+(bd|business development)/i;
-  const match = originalMessage.text.match(addToBdRegex);
-  
-  if (match && match[1]) {
-    // We found a team name to add
-    const teamName = match[1];
-    requestTitle = `${requestTypeCapitalized} request: Add ${teamName}`;
-  } else if (requestTitle.includes('<@')) {
-    // Clean up any Slack user IDs if present
-    requestTitle = requestTitle.replace(/<@[A-Z0-9]+>/g, '').trim();
-    if (!requestTitle.toLowerCase().includes(requestType)) {
+    // Extract project/team name for BD requests
+    if (requestType === 'bd') {
+      // Look for patterns like "add X to bd" or similar
+      const addToBdRegex = /add\s+([A-Za-z0-9]+(?:[A-Za-z0-9._-]*[A-Za-z0-9]+)?)\s+to\s+bd/i;
+      const match = originalMessage.text.match(addToBdRegex);
+      
+      if (match && match[1]) {
+        // We found a project/team name to add
+        const projectName = match[1];
+        requestTitle = `Add ${projectName} to BD`;
+      } else {
+        // Clean up any Slack user IDs if present
+        requestTitle = requestTitle.replace(/<@[A-Z0-9]+>/g, '').trim();
+        
+        // Generic BD request title if no specific pattern matched
+        if (!requestTitle.toLowerCase().includes("bd")) {
+          requestTitle = `${requestTypeCapitalized} request: ${requestTitle}`;
+        }
+      }
+    } else if (!requestTitle.toLowerCase().includes(requestType)) {
+      // For feature requests
       requestTitle = `${requestTypeCapitalized} request: ${requestTitle}`;
-    }
-  } else if (!requestTitle.toLowerCase().includes(requestType)) {
-    requestTitle = `${requestTypeCapitalized} request: ${requestTitle}`;
-  }
-} else if (!requestTitle.toLowerCase().includes(requestType)) {
-  requestTitle = `${requestTypeCapitalized} request: ${requestTitle}`;
-}
+    } 
     
     // Build description from thread
     let fullDescription = `*Original request by ${requesterInfo.user.real_name}:*\n${originalMessage.text}\n\n`;
