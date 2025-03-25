@@ -15,6 +15,9 @@ const receiver = new ExpressReceiver({
     events: '/slack/events'
   }
 });
+
+const processedThreads = new Map(); // To track recently processed threads
+const DUPLICATE_PREVENTION_WINDOW_MS = 10000; // 10 seconds
  
 // Add challenge handling
 receiver.router.post('/slack/events', (req, res, next) => {
@@ -451,6 +454,26 @@ async function handleUpdateCommand(client, channel, threadTs, requestType, featu
 async function handleCreateCommand(client, channel, threadTs, requestType) {
   try {
     console.log(`Creating ${requestType} request in thread ${threadTs}`);
+    
+    // Check if this thread was recently processed to prevent duplicates
+    const threadKey = `${channel}-${threadTs}-${requestType}`;
+    const lastProcessed = processedThreads.get(threadKey);
+    const now = Date.now();
+    
+    if (lastProcessed && (now - lastProcessed) < DUPLICATE_PREVENTION_WINDOW_MS) {
+      console.log(`Skipping duplicate request for thread ${threadTs} (processed ${now - lastProcessed}ms ago)`);
+      return; 
+    }
+    
+    // Mark this thread as being processed
+    processedThreads.set(threadKey, now);
+    
+    // Clean up old entries from the map to prevent memory leaks
+    for (const [key, timestamp] of processedThreads.entries()) {
+      if (now - timestamp > DUPLICATE_PREVENTION_WINDOW_MS) {
+        processedThreads.delete(key);
+      }
+    }
     
     // Get thread info
     const replies = await client.conversations.replies({
