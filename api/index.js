@@ -129,11 +129,15 @@ function parseCommand(text) {
   if (lowerText.includes('update') && lowerText.includes(' to ')) {
     const parts = text.split(/update\s+/i)[1].split(/\s+to\s+/i);
     if (parts.length >= 2) {
+      // Extract the new status and remove any mention of the bot
+      let newStatus = parts[1].trim().replace(/"/g, '');
+      newStatus = newStatus.replace(/<@[A-Z0-9]+>/g, '').trim();
+      
       return {
         type: 'update',
         requestType: requestType,
         featureQuery: parts[0].trim(),
-        newStatus: parts[1].trim().replace(/"/g, '')
+        newStatus: newStatus
       };
     }
   }
@@ -242,17 +246,19 @@ app.event('app_mention', async ({ event, client }) => {
 async function handleHelpCommand(client, channel, threadTs) {
   const helpText = `*HelperBot Commands:*\n
 - *Create a request:* Tag @helperbot in a thread to save the thread
-  - Include "bd" in your message for business development requests
-  - Otherwise it will be saved as a feature request
+  • Include "bd" in your message for business development requests
+  • Otherwise it will be saved as a feature request
 
 - *Update status:* 
-  - @helperbot update [feature] to [status]
-  - @helperbot update bd [title] to [status]
+  • @helperbot update [feature] to [status]
+  • @helperbot update bd [title] to [status]
+  • ⚠️ IMPORTANT: @helperbot must be at the START of your message
+  • ⚠️ IMPORTANT: Status values are case-sensitive (use correct capitalization)
 
 - *Check statuses:* 
-  - @helperbot status (features only)
-  - @helperbot status bd (BD requests only)
-  - Add "all" to include completed requests
+  • @helperbot status (features only)
+  • @helperbot status bd (BD requests only)
+  • Add "all" to include completed requests
 
 - *Help:* @helperbot help
 
