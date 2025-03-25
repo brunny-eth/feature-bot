@@ -150,18 +150,18 @@ app.event('app_mention', async ({ event, client }) => {
     console.log('Received app_mention event with text:', event.text);
     const threadTs = event.thread_ts || event.ts;
     
-    // Check if this thread was recently processed to prevent duplicates
-    const threadKey = `${channel}-${threadTs}-${requestType}`;
-    const lastProcessed = processedThreads.get(threadKey);
+    // Check if this event was recently processed to prevent duplicates
+    const eventKey = `${event.channel}-${threadTs}-${event.ts}`;
+    const lastProcessed = processedThreads.get(eventKey);
     const now = Date.now();
     
     if (lastProcessed && (now - lastProcessed) < DUPLICATE_PREVENTION_WINDOW_MS) {
-      console.log(`Skipping duplicate request for thread ${threadTs} (processed ${now - lastProcessed}ms ago)`);
+      console.log(`Skipping duplicate event (processed ${now - lastProcessed}ms ago)`);
       return; 
     }
     
-    // Mark this thread as being processed
-    processedThreads.set(threadKey, now);
+    // Mark this event as being processed
+    processedThreads.set(eventKey, now);
     
     // Clean up old entries from the map to prevent memory leaks
     for (const [key, timestamp] of processedThreads.entries()) {
@@ -171,7 +171,7 @@ app.event('app_mention', async ({ event, client }) => {
     }
 
     const isInThread = event.thread_ts && event.ts !== event.thread_ts;
-    
+        
     // Get all messages in the thread for context
     const replies = await client.conversations.replies({
       channel: event.channel,
